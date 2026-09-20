@@ -16,6 +16,7 @@ from typing import Optional
 
 from config import (
     WIKTIONARY_API_URL,
+    FREE_DICTIONARY_API_URL,
     REQUEST_TIMEOUT,
     USER_AGENT
 )
@@ -55,28 +56,47 @@ class DictionaryService:
         ]
         return any(re.search(p, d) for p in patterns)
 
-    def _score_definition(self, lang_code: str, pos: str, def_clean: str) -> int:
+    def _score_definition(self, lang_name: str, pos: str, def_clean: str, is_exact_query: bool = True) -> int:
         """
-        Score a candidate definition to prefer primary/common meanings over obscure grammatical entries.
+        Score candidate definitions according to strict language and relevancy priority:
+        1. Exact English entry / common English definition (+100)
+        2. Exact requested foreign-language entry / modern living language (+40)
+        3. Archaic or historical language entries (-20)
+        4. Translingual / ISO code / symbol / rare entries as fallback (-120)
         """
         score = 100
+        lang_lower = (lang_name or '').lower().strip()
         d_lower = def_clean.lower().strip()
+        pos_lower = (pos or '').lower().strip()
 
-        # Prefer English definitions for general lookup
-        if lang_code == 'en':
-            score += 50
+        # Language priority ranking
+        if lang_lower == 'english':
+            score += 100
+        elif lang_lower in ['translingual', 'symbol']:
+            score -= 120
+        elif any(archaic in lang_lower for archaic in ['middle english', 'old english', 'old norse', 'old french', 'proto-']):
+            score -= 20
+        else:
+            score += 40
+
+        # Heavy penalty for technical symbols / ISO language codes / taxonomic specs
+        if re.search(r'iso 639|\blanguage code\b|\bchemical symbol\b|\bmath symbol\b|\btaxonomic genus\b|\btaxonomic species\b', d_lower):
+            score -= 100
 
         # Penalize obscure grammatical inflections (e.g. 'plural of pari')
         if self._is_grammatical_inflection(def_clean):
-            score -= 80
+            score -= 60
 
-        # Penalize obscure taxonomic genus entries if possible
-        if d_lower.startswith('a taxonomic genus') or d_lower.startswith('a taxonomic species'):
+        # Penalize symbol/character parts of speech
+        if pos_lower in ['symbol', 'letter', 'character']:
             score -= 40
 
-        # Bonus for key high-value indicators
-        if any(kw in d_lower for kw in ['capital', 'city', 'greeting', 'salutation', 'discovery', 'good morning', 'thank you']):
+        # Bonus for key high-value human meaning indicators
+        if any(kw in d_lower for kw in ['greeting', 'salutation', 'discovery', 'good day', 'thank you', 'girl', 'boy', 'waiter', 'misfortune', 'pleasure', 'capital', 'city']):
             score += 30
+
+        if is_exact_query:
+            score += 20
 
         return score
 
@@ -134,87 +154,146 @@ class DictionaryService:
 
         return candidates
 
+    def _lookup_free_dictionary(self, word: str) -> Optional[LookupResult]:
+        """Attempt primary lookup via Free Dictionary API for single-word English terms and phonetics."""
+        clean = word.strip()
+        if not clean or ' ' in clean:
+            return None
+
+        url = f"{FREE_DICTIONARY_API_URL}{urllib.parse.quote(clean.lower())}"
+        req = urllib.request.Request(url, headers=self.headers)
+        try:
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                if isinstance(data, list) and len(data) > 0:
+                    entry = data[0]
+                    meanings = entry.get('meanings', [])
+                    if not meanings:
+                        return None
+
+                    # Extract pronunciation/phonetics
+                    phonetic = entry.get('phonetic', '')
+                    if not phonetic:
+                        for p in entry.get('phonetics', []):
+                            if isinstance(p, dict) and p.get('text'):
+                                phonetic = p.get('text')
+                                break
+
+                    primary_pos = None
+                    primary_def = None
+                    secondary_def = None
+
+                    for m in meanings:
+                        pos = m.get('partOfSpeech')
+                        defs = m.get('definitions', [])
+                        for d in defs:
+                            d_text = self._clean_html(d.get('definition', ''))
+                            if d_text and not self._is_grammatical_inflection(d_text):
+                                if not primary_def:
+                                    primary_pos = pos
+                                    primary_def = d_text
+                                elif not secondary_def and pos == primary_pos:
+                                    secondary_def = d_text
+                                    break
+                        if primary_def and secondary_def:
+                            break
+
+                    if primary_def:
+                        full_def = primary_def
+                        if secondary_def and len(primary_def) < 70:
+                            full_def = f"{primary_def}\n• {secondary_def}"
+                        return LookupResult(
+                            word=clean,
+                            language="English",
+                            part_of_speech=primary_pos.lower() if primary_pos else None,
+                            definition=full_def,
+                            pronunciation=phonetic if phonetic else None
+                        )
+        except Exception:
+            pass
+        return None
+
+    def _lookup_wiktionary(self, word: str) -> LookupResult:
+        """Multilingual lookup and fallback engine using Wiktionary API."""
+        clean_word = word.strip()
+        query_candidates = self._get_query_candidates(clean_word)
+        all_definitions = []
+
+        for idx, q in enumerate(query_candidates):
+            url = f"{WIKTIONARY_API_URL}{urllib.parse.quote(q)}"
+            req = urllib.request.Request(url, headers=self.headers)
+
+            try:
+                with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+                    if not isinstance(data, dict) or not data:
+                        continue
+
+                    is_exact = (idx == 0)
+                    for lang_code, entries in data.items():
+                        if not isinstance(entries, list):
+                            continue
+                        for entry in entries:
+                            lang_name = entry.get('language', lang_code.upper())
+                            pos = entry.get('partOfSpeech', '')
+                            raw_defs = entry.get('definitions', [])
+
+                            for d in raw_defs:
+                                if isinstance(d, dict) and 'definition' in d:
+                                    c_def = self._clean_html(d['definition'])
+                                    if c_def:
+                                        sc = self._score_definition(lang_name, pos, c_def, is_exact_query=is_exact)
+                                        all_definitions.append({
+                                            'query': q,
+                                            'lang_code': lang_code,
+                                            'language': lang_name,
+                                            'part_of_speech': pos.lower() if pos else None,
+                                            'definition': c_def,
+                                            'score': sc
+                                        })
+            except Exception:
+                pass
+
+            # Only break early if a very high relevancy definition is found for exact query
+            if any(d['score'] >= 180 for d in all_definitions):
+                break
+
+        if not all_definitions:
+            return LookupResult(word=clean_word, error_message="Word not found.")
+
+        # Sort definitions by score (highest relevancy first)
+        all_definitions.sort(key=lambda x: x['score'], reverse=True)
+        best = all_definitions[0]
+
+        # Format primary definition
+        primary_def = best['definition']
+
+        # If second definition exists for same language and has decent score, include bullet point
+        same_lang_defs = [d for d in all_definitions if d['language'] == best['language'] and d['definition'] != primary_def]
+        if same_lang_defs and len(primary_def) < 70 and not self._is_grammatical_inflection(same_lang_defs[0]['definition']):
+            primary_def = f"{primary_def}\n• {same_lang_defs[0]['definition']}"
+
+        return LookupResult(
+            word=clean_word,  # Preserve user's original query in UI
+            language=best['language'],
+            part_of_speech=best['part_of_speech'],
+            definition=primary_def
+        )
+
     def lookup(self, word: str) -> LookupResult:
         """
         Perform dictionary lookup for a given word or phrase.
-        Evaluates and scores candidate queries and definitions to return the most relevant result.
-        Preserves original user query in returned LookupResult.
+        First attempts Free Dictionary API for English lookups and phonetics.
+        Falls back to Wiktionary API for multilingual support and robust entry selection.
         """
         clean_word = word.strip()
         if not clean_word:
             return LookupResult(word=word, error_message="Word not found.")
 
-        query_candidates = self._get_query_candidates(clean_word)
-        all_definitions = []
+        # Try Free Dictionary API first for single-word English entries
+        res = self._lookup_free_dictionary(clean_word)
+        if res:
+            return res
 
-        try:
-            for q in query_candidates:
-                url = f"{WIKTIONARY_API_URL}{urllib.parse.quote(q)}"
-                req = urllib.request.Request(url, headers=self.headers)
-
-                try:
-                    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-                        data = json.loads(resp.read().decode('utf-8'))
-                        if not isinstance(data, dict) or not data:
-                            continue
-
-                        for lang_code, entries in data.items():
-                            if not isinstance(entries, list):
-                                continue
-                            for entry in entries:
-                                lang_name = entry.get('language', lang_code.upper())
-                                pos = entry.get('partOfSpeech', '')
-                                raw_defs = entry.get('definitions', [])
-
-                                for d in raw_defs:
-                                    if isinstance(d, dict) and 'definition' in d:
-                                        c_def = self._clean_html(d['definition'])
-                                        if c_def:
-                                            sc = self._score_definition(lang_code, pos, c_def)
-                                            all_definitions.append({
-                                                'query': q,
-                                                'lang_code': lang_code,
-                                                'language': lang_name,
-                                                'part_of_speech': pos.lower() if pos else None,
-                                                'definition': c_def,
-                                                'score': sc
-                                            })
-                except Exception:
-                    pass
-
-                # If we found strong definitions (score >= 120) for early candidates, stop querying
-                if any(d['score'] >= 120 for d in all_definitions):
-                    break
-
-            if not all_definitions:
-                return LookupResult(word=clean_word, error_message="Word not found.")
-
-            # Sort definitions by score (highest relevancy first)
-            all_definitions.sort(key=lambda x: x['score'], reverse=True)
-            best = all_definitions[0]
-
-            # Format primary definition
-            primary_def = best['definition']
-            
-            # If second definition exists for same language and has decent score, include bullet point
-            same_lang_defs = [d for d in all_definitions if d['language'] == best['language'] and d['definition'] != primary_def]
-            if same_lang_defs and len(primary_def) < 70 and not self._is_grammatical_inflection(same_lang_defs[0]['definition']):
-                primary_def = f"{primary_def}\n• {same_lang_defs[0]['definition']}"
-
-            return LookupResult(
-                word=clean_word,  # Preserve user's original query in UI
-                language=best['language'],
-                part_of_speech=best['part_of_speech'],
-                definition=primary_def
-            )
-
-        except urllib.error.URLError as e:
-            if isinstance(e.reason, socket.timeout):
-                return LookupResult(word=clean_word, error_message="The lookup timed out. Try again.")
-            return LookupResult(word=clean_word, error_message="Unable to connect. Check your internet connection.")
-
-        except (TimeoutError, socket.timeout):
-            return LookupResult(word=clean_word, error_message="The lookup timed out. Try again.")
-
-        except Exception:
-            return LookupResult(word=clean_word, error_message="No definition available.")
+        # Multilingual & fallback engine via Wiktionary API
+        return self._lookup_wiktionary(clean_word)
