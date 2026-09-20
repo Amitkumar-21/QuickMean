@@ -6,8 +6,6 @@
 
 ## 📸 Screenshot
 
-*(Screenshot placeholder – add your UI screenshot here)*
-
 ![QuickMeaning UI](assets/screenshot.png)
 
 ---
@@ -105,7 +103,7 @@ QuickMeaning/
 ├── rthook_six_patch.py   # PyInstaller runtime hook for Python 3.12 compatibility
 ├── QuickMeaning.spec     # PyInstaller configuration specification
 ├── requirements.txt      # Project dependencies
-├── assets/               # Application icons (icon.png, icon.ico)
+├── assets/               # Application icons & UI screenshot (icon.png, icon.ico, screenshot.png)
 └── README.md             # Project documentation
 ```
 
