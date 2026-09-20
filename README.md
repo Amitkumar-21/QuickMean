@@ -158,6 +158,16 @@ QuickMeaning/
 
 ---
 
+## 📥 Download
+
+[⬇️ **Download QuickMeaning for Windows**](https://github.com/Amitkumar-21/QuickMean/releases/tag/v1.0.0)
+
+Download the latest Windows executable from the **v1.0.0 release** and run `QuickMeaning.exe`.
+
+> Requires an active internet connection for dictionary lookups.
+
+---
+
 ## 🔮 Future Ideas
 
 - **Selected-Text Lookup**: Automatically populate search with currently highlighted text.
@@ -171,4 +181,5 @@ QuickMeaning/
 ## 📄 License
 
 This project is licensed under the MIT License.
+
 
