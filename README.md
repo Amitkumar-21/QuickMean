@@ -13,6 +13,9 @@
 ## ✨ Features
 
 - **Global Shortcut**: Press `Ctrl + Shift + M` anywhere in Windows to trigger the search popup.
+- **Start with Windows**: Automatically start QuickMeaning silently in the system tray after Windows login without administrator privileges.
+- **System Tray Controls**: Easily enable or disable automatic startup directly from the system-tray context menu.
+- **Silent Background Launch**: Starts in the system tray without opening the search popup window on startup.
 - **Clean Input State**: Search input field clears automatically every time the window is reopened.
 - **Keyboard & Mouse Control**:
   - Press `Enter` to submit search.
@@ -27,10 +30,41 @@
 
 ## ⚙️ How It Works
 
-1. QuickMeaning runs quietly in the background with a system tray icon.
+### Automatic Startup Workflow
+
+```text
+Windows Login
+     ↓
+QuickMeaning starts
+     ↓
+System Tray
+     ↓
+Ctrl + Shift + M
+     ↓
+Search Popup
+     ↓
+Dictionary Result
+```
+
+### Manual Launch Workflow
+
+```text
+Launch QuickMeaning (python main.py or executable)
+     ↓
+System Tray
+     ↓
+Ctrl + Shift + M
+     ↓
+Search Popup
+     ↓
+Dictionary Result
+```
+
+1. QuickMeaning runs quietly in the background with a system tray icon (launched manually or automatically after Windows login).
 2. Pressing `Ctrl + Shift + M` triggers a thread-safe signal that centers and focuses the frameless command palette popup.
 3. Single-word queries first check the **Free Dictionary API** for English definitions and IPA phonetics.
 4. If unavailable or when searching foreign words, the query falls back to the **Wiktionary REST API**, applying article normalization and relevancy scoring to deliver the best definition.
+5. *Note: Dictionary lookups require an active internet connection to query online APIs.*
 
 ---
 
@@ -40,6 +74,7 @@
 
 - Windows 10 or 11
 - Python 3.10+ installed and added to PATH
+- Active internet connection (required for dictionary lookups)
 
 ### Installation
 
@@ -58,18 +93,31 @@ python main.py
 
 ## 🎯 Usage
 
-1. Start QuickMeaning by running `python main.py` or double-clicking `dist/QuickMeaning.exe`.
-2. Press **`Ctrl + Shift + M`** from any active application (browser, PDF reader, IDE, text editor).
+### Basic Usage
+
+1. Start QuickMeaning manually by running `python main.py` or double-clicking `dist/QuickMeaning.exe`, or let it launch automatically after Windows login.
+2. Once QuickMeaning is running in the background, the global shortcut **`Ctrl + Shift + M`** is available from any active application (browser, PDF reader, IDE, text editor).
 3. Type any word or phrase (e.g., `ask`, `serendipity`, `bonjour`, `La fille`).
 4. Press **`Enter`** to view part of speech, pronunciation, language, and definition.
 5. Press **`Esc`** or click **Esc to close** to hide the popup.
+
+### System Tray & Start with Windows
+
+- **Start with Windows**:
+  1. Right-click the QuickMeaning system-tray icon.
+  2. Enable **Start with Windows** to automatically launch QuickMeaning after Windows login.
+  3. Disable it anytime to prevent automatic startup.
+- **Session vs. Startup Preference**:
+  - Selecting **Exit** from the tray menu closes QuickMeaning for the current session only; it does **not** disable your startup preference.
+- **Global Hotkey Availability**:
+  - The global shortcut **`Ctrl + Shift + M`** is available whenever QuickMeaning is running in the background.
 
 ---
 
 ## 🛠️ Tech Stack
 
 - **Python**: Core application language
-- **PySide6**: Qt framework for desktop UI
+- **PySide6**: Qt framework for desktop UI & system tray
 - **pynput**: Global hotkey listener
 - **httpx / urllib**: Network requests for dictionary APIs
 - **Free Dictionary API**: Primary English definitions & IPA phonetics
@@ -98,6 +146,7 @@ QuickMeaning/
 ├── ui.py                 # PySide6 fixed-size, draggable command palette UI
 ├── dictionary.py         # Free Dictionary API & Wiktionary scoring logic
 ├── hotkey.py             # Global hotkey listener (pynput + Qt Signals)
+├── autostart.py          # Windows startup shortcut management (no admin required)
 ├── config.py             # Configuration constants, colors, & dimensions
 ├── build.py              # PyInstaller automated build script
 ├── rthook_six_patch.py   # PyInstaller runtime hook for Python 3.12 compatibility
@@ -122,3 +171,4 @@ QuickMeaning/
 ## 📄 License
 
 This project is licensed under the MIT License.
+

@@ -21,6 +21,7 @@ from PySide6.QtCore import Qt
 from config import APP_NAME, HOTKEY_DISPLAY
 from ui import QuickMeaningWindow
 from hotkey import HotkeyListener
+from autostart import is_autostart_enabled, set_autostart, sync_autostart_path
 
 
 def get_icon_path() -> str:
@@ -46,6 +47,9 @@ def main():
     # Crucial: Keep app running in background when popup is hidden
     app.setQuitOnLastWindowClosed(False)
     
+    # Verify/update autostart path if enabled
+    sync_autostart_path()
+
     icon_path = get_icon_path()
     if icon_path:
         app_icon = QIcon(icon_path)
@@ -62,15 +66,26 @@ def main():
 
     tray_menu = QMenu()
     
-    show_action = QAction(f"Lookup Word ({HOTKEY_DISPLAY})", app)
-    show_action.triggered.connect(window.show_and_focus)
-    tray_menu.addAction(show_action)
+    title_action = QAction(APP_NAME, app)
+    title_action.triggered.connect(window.show_and_focus)
+    tray_menu.addAction(title_action)
 
     tray_menu.addSeparator()
 
-    quit_action = QAction("Quit QuickMeaning", app)
-    quit_action.triggered.connect(app.quit)
-    tray_menu.addAction(quit_action)
+    autostart_action = QAction("Start with Windows", app)
+    autostart_action.setCheckable(True)
+    autostart_action.setChecked(is_autostart_enabled())
+
+    def on_autostart_triggered(checked: bool):
+        set_autostart(checked)
+        autostart_action.setChecked(is_autostart_enabled())
+
+    autostart_action.triggered.connect(on_autostart_triggered)
+    tray_menu.addAction(autostart_action)
+
+    exit_action = QAction("Exit", app)
+    exit_action.triggered.connect(app.quit)
+    tray_menu.addAction(exit_action)
 
     tray_icon.setContextMenu(tray_menu)
     tray_icon.activated.connect(
